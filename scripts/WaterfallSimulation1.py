@@ -1,4 +1,4 @@
-from scripts.Utils import Utils
+from Utils import Utils
 
 
 class waterfall_simulation_1():
