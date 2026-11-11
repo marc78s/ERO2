@@ -22,18 +22,19 @@ class Utils():
         return pd.Series(np.cumsum(gen.exponential(1.0 / lamda, t_size)))
 
     @staticmethod
-    def simulate_queue(gen, t_arrivals, mu, n_servers, capacity=np.inf, p_backup=0.0):
+    def simulate_queue(gen, t_arrivals, mu, n_servers, capacity=np.inf, p_backup=0.0, service_law=None):
         """
-        Simulates a FIFO queue with n_servers identical exponential servers.
+        Simulates a FIFO queue with n_servers identical servers, exponential by default.
 
         Args :
-            gen        : a random generator
-            t_arrivals : series of queue arrival times, indexed by agent. NaN (agents refused upstream) are ignored.
-            mu         : parameter of exponential law corresponding to service times.
-            n_servers  : number of servers.
-            capacity   : number of places in queue, servers excluded.
-            p_backup   : probability that an agent is backed up, in which case it is never refused and waits
-                         for a place when the queue is full.
+            gen         : a random generator
+            t_arrivals  : series of queue arrival times, indexed by agent. NaN (agents refused upstream) are ignored.
+            mu          : service rate, the mean service time is 1/mu.
+            n_servers   : number of servers.
+            capacity    : number of places in queue, servers excluded.
+            p_backup    : probability that an agent is backed up, in which case it is never refused and waits
+                          for a place when the queue is full.
+            service_law : function (gen, mean, size) -> array of service times. If None, exponential law.
 
         Returns :
             A dataframe indexed by agent, sorted by queue arrival time, containing queue arrival times
@@ -44,14 +45,17 @@ class Utils():
         t_arrivals = t_arrivals.dropna().sort_values()
         t_arval_queue = t_arrivals.to_numpy()
         n = len(t_arval_queue)
-        services = gen.exponential(1.0 / mu, n)
+        if service_law is None:
+            services = gen.exponential(1.0 / mu, n)
+        else:
+            services = service_law(gen, 1.0 / mu, n)
         backed_up = gen.random(n) < p_backup if p_backup > 0 else np.zeros(n, dtype=bool)
 
         t_arval_srv = np.full(n, np.nan)
         t_depart_sys = np.full(n, np.nan)
 
         free_at = [0.0] * n_servers
-        waiting = deque() # service start times of the agents still waiting, in increasing order
+        waiting = deque()
 
         for i, t in enumerate(t_arval_queue):
             while waiting and waiting[0] <= t:
@@ -240,13 +244,11 @@ class Utils():
                 if n1 < ks:
                     q[i, (n1 + 1) * width + n2] += lamda
                 if n1 > 0:
-                    # a result leaving file 1 is lost, and n2 unchanged, when file 2 is full
                     q[i, (n1 - 1) * width + min(n2 + 1, kf)] += min(n1, n_servers) * mu1
                 if n2 > 0:
                     q[i, n1 * width + n2 - 1] += mu2
         q[np.diag_indices(size)] = -q.sum(axis=1)
 
-        # pi q = 0 and sum(pi) = 1 : the last balance equation is replaced by the normalisation
         a = q.T.copy()
         a[-1, :] = 1.0
         b = np.zeros(size)

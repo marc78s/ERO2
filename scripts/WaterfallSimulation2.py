@@ -20,25 +20,29 @@ class waterfall_simulation_2():
         kf (int)           : total capacity of file 2, server included (kf >= 1).
         gen (np.random)    : a random generator
         t_size (int)       : number of arrivals simulated.
-        tops1              : dataframe of file 1 times for each agent, filled by run_mmk.
+        service_law1       : law of service times of file 1, function (gen, mean, size). None for exponential.
+        service_law2       : law of service times of file 2, function (gen, mean, size). None for exponential.
+        tops1            : dataframe of file 1 times for each agent, filled by run_mmk.
         tops2              : dataframe of file 2 times for each agent, filled by run_mm1.
         tops               : dataframe of both files times for each agent, filled by run.
     """
 
 
-    def __init__(self, lamda, mu1, K, mu2, ks, kf, gen, test_z=100) :
+    def __init__(self, lamda, mu1, K, mu2, ks, kf, gen, test_z=100, service_law1=None, service_law2=None) :
         """
         Initializes a new instance of the class waterfall_simulation_2.
 
         Args :
-            lamda  : parameter of exponential law corresponding to interarrival times.
-            mu1    : parameter of exponential law corresponding to service times of file 1.
-            K      : number of servers of file 1.
-            mu2    : parameter of exponential law corresponding to service times of file 2.
-            ks     : total capacity of file 1, servers included (ks >= K).
-            kf     : total capacity of file 2, server included (kf >= 1).
-            gen    : a random generator
-            test_z : test size.
+            lamda        : parameter of exponential law corresponding to interarrival times.
+            mu1          : service rate of file 1, the mean service time is 1/mu1.
+            K            : number of servers of file 1.
+            mu2          : service rate of file 2, the mean service time is 1/mu2.
+            ks           : total capacity of file 1, servers included (ks >= K).
+            kf           : total capacity of file 2, server included (kf >= 1).
+            gen          : a random generator
+            test_z       : test size.
+            service_law1 : law of service times of file 1, function (gen, mean, size). None for exponential.
+            service_law2 : law of service times of file 2, function (gen, mean, size). None for exponential.
         """
 
         if ks < K:
@@ -54,6 +58,8 @@ class waterfall_simulation_2():
         self.kf = kf
         self.gen = gen
         self.t_size = test_z
+        self.service_law1 = service_law1
+        self.service_law2 = service_law2
 
         self.tops1 = None
         self.tops2 = None
@@ -67,7 +73,8 @@ class waterfall_simulation_2():
         """
         self.tops = None
         t_arrivals = Utils.poisson_arrivals(self.gen, self.lamda, self.t_size)
-        self.tops1 = Utils.simulate_queue(self.gen, t_arrivals, self.mu1, self.K, self.ks - self.K)
+        self.tops1 = Utils.simulate_queue(self.gen, t_arrivals, self.mu1, self.K, self.ks - self.K,
+                                          service_law=self.service_law1)
 
     def run_mm1(self, t_arrivals=None):
         """
@@ -83,7 +90,8 @@ class waterfall_simulation_2():
             t_arrivals = Utils.poisson_arrivals(self.gen, self.lamda, self.t_size)
 
         self.tops = None
-        self.tops2 = Utils.simulate_queue(self.gen, t_arrivals, self.mu2, 1, self.kf - 1)
+        self.tops2 = Utils.simulate_queue(self.gen, t_arrivals, self.mu2, 1, self.kf - 1,
+                                          service_law=self.service_law2)
 
     def run(self):
         """
