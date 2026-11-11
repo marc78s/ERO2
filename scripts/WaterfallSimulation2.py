@@ -1,12 +1,13 @@
-from scripts.Utils import Utils
+from Utils import Utils
 
 
 class waterfall_simulation_2():
     """
-    A class representing the waterfall tandem queue with finite queues : M/M/K/(K+ks) followed by M/M/1/(kf+1).
+    A class representing the waterfall tandem queue with finite capacities : M/M/K/ks followed by M/M/1/kf.
 
-    A push arriving while the ks places of file 1 are taken is refused (error message). A result arriving
-    while the kf places of file 2 are taken is lost (blank page). A refused agent keeps its row in the
+    ks and kf are total capacities, servers included : file 1 has ks - K waiting places and file 2 has kf - 1.
+    A push arriving while ks pushes are already in file 1 is refused (error message). A result arriving
+    while kf results are already in file 2 is lost (blank page). A refused agent keeps its row in the
     dataframes, with NaN for the times it never reached, so statistics only cover the agents that were served.
 
     Attributes :
@@ -15,8 +16,8 @@ class waterfall_simulation_2():
         mu1 (float)        : parameter of exponential law corresponding to service times of file 1.
         K (int)            : number of servers of file 1.
         mu2 (float)        : parameter of exponential law corresponding to service times of file 2.
-        ks (int)           : capacity of file 1, servers excluded.
-        kf (int)           : capacity of file 2, server excluded.
+        ks (int)           : total capacity of file 1, servers included (ks >= K).
+        kf (int)           : total capacity of file 2, server included (kf >= 1).
         gen (np.random)    : a random generator
         t_size (int)       : number of arrivals simulated.
         tops1              : dataframe of file 1 times for each agent, filled by run_mmk.
@@ -34,11 +35,16 @@ class waterfall_simulation_2():
             mu1    : parameter of exponential law corresponding to service times of file 1.
             K      : number of servers of file 1.
             mu2    : parameter of exponential law corresponding to service times of file 2.
-            ks     : capacity of file 1, servers excluded.
-            kf     : capacity of file 2, server excluded.
+            ks     : total capacity of file 1, servers included (ks >= K).
+            kf     : total capacity of file 2, server included (kf >= 1).
             gen    : a random generator
             test_z : test size.
         """
+
+        if ks < K:
+            raise ValueError("ks is a total capacity, it must be at least K")
+        if kf < 1:
+            raise ValueError("kf is a total capacity, it must be at least 1")
 
         self.lamda = lamda
         self.mu1 = mu1
@@ -55,17 +61,17 @@ class waterfall_simulation_2():
 
     def run_mmk(self):
         """
-        Simulates file 1 alone, an M/M/K/(K+ks) queue fed by a Poisson process of intensity lamda.
+        Simulates file 1 alone, an M/M/K/ks queue fed by a Poisson process of intensity lamda.
 
         Fills the attribute tops1.
         """
         self.tops = None
         t_arrivals = Utils.poisson_arrivals(self.gen, self.lamda, self.t_size)
-        self.tops1 = Utils.simulate_queue(self.gen, t_arrivals, self.mu1, self.K, self.ks)
+        self.tops1 = Utils.simulate_queue(self.gen, t_arrivals, self.mu1, self.K, self.ks - self.K)
 
     def run_mm1(self, t_arrivals=None):
         """
-        Simulates file 2 alone, an M/M/1/(kf+1) queue.
+        Simulates file 2 alone, an M/M/1/kf queue.
 
         Fills the attribute tops2.
 
@@ -77,7 +83,7 @@ class waterfall_simulation_2():
             t_arrivals = Utils.poisson_arrivals(self.gen, self.lamda, self.t_size)
 
         self.tops = None
-        self.tops2 = Utils.simulate_queue(self.gen, t_arrivals, self.mu2, 1, self.kf)
+        self.tops2 = Utils.simulate_queue(self.gen, t_arrivals, self.mu2, 1, self.kf - 1)
 
     def run(self):
         """

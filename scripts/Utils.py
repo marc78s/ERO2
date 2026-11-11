@@ -193,3 +193,67 @@ class Utils():
         if file is None:
             return tops['t_depart_sys2'].isna().mean()
         return {1: tops1, 2: tops2}[file]['t_depart_sys'].isna().mean()
+
+    @staticmethod
+    def mmkn_blocking(lamda, mu, n_servers, capacity):
+        """
+        Computes the exact blocking probability of an M/M/K/N queue, that is the stationary probability that the
+        system is full (an arriving agent sees it full, by PASTA). With n_servers = 1 it is an M/M/1/N queue.
+
+        Args :
+            lamda     : arrival rate.
+            mu        : service rate of each server.
+            n_servers : number of servers K.
+            capacity  : total capacity N of the system, servers included (N >= K).
+
+        Returns :
+            The blocking probability, as a float.
+        """
+        weights = np.ones(capacity + 1)
+        for n in range(1, capacity + 1):
+            weights[n] = weights[n - 1] * lamda / (min(n, n_servers) * mu)
+        return weights[-1] / weights.sum()
+
+    @staticmethod
+    def tandem_blocking_exact(lamda, mu1, n_servers, ks, mu2, kf):
+        """
+        Computes the exact refusal proportions of the tandem M/M/K/ks -> M/M/1/kf, from the stationary distribution
+        of the Markov chain on (n1, n2), n1 being the number of pushes in file 1 and n2 the number of results in
+        file 2. No Poisson assumption is made on the departures of file 1.
+
+        Args :
+            lamda, mu1, mu2 : arrival rate, service rate of each server of file 1, service rate of file 2.
+            n_servers       : number K of servers of file 1.
+            ks, kf          : total capacities of file 1 and file 2, servers included.
+
+        Returns :
+            (p1, p2) where p1 is the proportion of pushes refused by file 1 and p2 the proportion of results lost
+            by file 2 among the results leaving file 1.
+        """
+        width = kf + 1
+        size = (ks + 1) * width
+        q = np.zeros((size, size))
+
+        for n1 in range(ks + 1):
+            for n2 in range(kf + 1):
+                i = n1 * width + n2
+                if n1 < ks:
+                    q[i, (n1 + 1) * width + n2] += lamda
+                if n1 > 0:
+                    # a result leaving file 1 is lost, and n2 unchanged, when file 2 is full
+                    q[i, (n1 - 1) * width + min(n2 + 1, kf)] += min(n1, n_servers) * mu1
+                if n2 > 0:
+                    q[i, n1 * width + n2 - 1] += mu2
+        q[np.diag_indices(size)] = -q.sum(axis=1)
+
+        # pi q = 0 and sum(pi) = 1 : the last balance equation is replaced by the normalisation
+        a = q.T.copy()
+        a[-1, :] = 1.0
+        b = np.zeros(size)
+        b[-1] = 1.0
+        pi = np.linalg.solve(a, b).reshape(ks + 1, width)
+
+        departures = np.minimum(np.arange(ks + 1), n_servers) * mu1
+        p1 = pi[ks].sum()
+        p2 = (departures * pi[:, kf]).sum() / (departures * pi.sum(axis=1)).sum()
+        return p1, p2
