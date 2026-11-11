@@ -1,0 +1,23 @@
+[project]
+name = "ero2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Ivan HUARD", email = "ivcvhb@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "ipython>=9.18.1",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.4",
+    "pandas>=3.1.1",
+    "scipy>=1.18.1",
+]
+
+[project.scripts]
+ero2 = "ero2:main"
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13.0"]
+build-backend = "uv_build"
