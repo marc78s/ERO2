@@ -33,14 +33,16 @@ class Utils():
             n_servers   : number of servers.
             capacity    : number of places in queue, servers excluded.
             p_backup    : probability that an agent is backed up, in which case it is never refused and waits
-                          for a place when the queue is full.
+                          in an infinite back-up for a place when the queue is full.
             service_law : function (gen, mean, size) -> array of service times. If None, exponential law.
 
         Returns :
             A dataframe indexed by agent, sorted by queue arrival time, containing queue arrival times
             (t_arval_queue), service arrival times (t_arval_srv), departure times (t_depart_sys),
             sojourn (t_sojourn), waiting (t_waiting) and service (t_service) times. Refused agents have
-            NaN everywhere but in t_arval_queue.
+            NaN everywhere but in t_arval_queue. If p_backup > 0, two boolean columns are added : backed_up
+            (the agent was backed up) and rescued (the agent found the queue full and was kept by the back-up,
+            it would have been refused without it).
         """
         t_arrivals = t_arrivals.dropna().sort_values()
         t_arval_queue = t_arrivals.to_numpy()
@@ -53,6 +55,7 @@ class Utils():
 
         t_arval_srv = np.full(n, np.nan)
         t_depart_sys = np.full(n, np.nan)
+        rescued = np.zeros(n, dtype=bool)
 
         free_at = [0.0] * n_servers
         waiting = deque()
@@ -63,8 +66,10 @@ class Utils():
 
             start = max(t, free_at[0])
             if start > t:
-                if len(waiting) >= capacity and not backed_up[i]:
-                    continue
+                if len(waiting) >= capacity:
+                    if not backed_up[i]:
+                        continue
+                    rescued[i] = True
                 waiting.append(start)
 
             t_arval_srv[i] = start
@@ -81,6 +86,9 @@ class Utils():
         tops['t_sojourn'] = tops['t_depart_sys'] - tops['t_arval_queue']
         tops['t_waiting'] = tops['t_arval_srv'] - tops['t_arval_queue']
         tops['t_service'] = tops['t_depart_sys'] - tops['t_arval_srv']
+        if p_backup > 0:
+            tops['backed_up'] = backed_up
+            tops['rescued'] = rescued
         return tops
 
     @staticmethod

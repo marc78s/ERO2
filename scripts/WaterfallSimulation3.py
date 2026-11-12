@@ -1,78 +1,47 @@
-from scripts.Utils import Utils
+import pandas as pd
+
+from Utils import Utils
+from WaterfallSimulation2 import waterfall_simulation_2
 
 
-class waterfall_simulation_3():
+class waterfall_simulation_3(waterfall_simulation_2):
     """
-    A class representing the waterfall tandem queue with finite queues and a random back-up of results.
+    A class representing the waterfall tandem queue of part 2 (M/M/K/ks followed by M/M/1/kf) with a random
+    back-up of results.
 
-    A push arriving while the ks places of file 1 are taken is refused (error message). Each result leaving
-    file 1 is backed up with probability p. A backed up result finding file 2 full is not lost : it waits in
-    the back-up, of infinite capacity, and enters file 2 as soon as a place is free, in FIFO order. A result
-    which is not backed up and finds file 2 full is lost (blank page).
+    Everything is inherited from waterfall_simulation_2 (same parameters, same conventions : ks and kf are total
+    capacities, servers included), except file 2. Each result leaving file 1 is backed up with probability p.
+    A backed up result finding file 2 full is not lost : it waits in the back-up, of infinite capacity, and
+    enters file 2 as soon as a place is free, in FIFO order. A result which is not backed up and finds file 2
+    full is lost (blank page). With p = 0 the system is the one of part 2.
 
-    The time spent in the back-up is counted in t_waiting2, and the agents in back-up in the ag_in_queue
-    column of counts : a result is in back-up only while file 2 is full, so service order stays FIFO.
+    The time spent in the back-up is counted in t_waiting2. tops2 and tops have two more boolean columns :
+    backed_up (the result was backed up) and rescued (the result found file 2 full and was kept by the back-up).
 
-    Attributes :
+    Additional attribute :
 
-        lamda (float)      : parameter of exponential law corresponding to interarrival times.
-        mu1 (float)        : parameter of exponential law corresponding to service times of file 1.
-        K (int)            : number of servers of file 1.
-        mu2 (float)        : parameter of exponential law corresponding to service times of file 2.
-        ks (int)           : capacity of file 1, servers excluded.
-        kf (int)           : capacity of file 2, server excluded.
-        p (float)          : probability of backing up a result.
-        gen (np.random)    : a random generator
-        t_size (int)       : number of arrivals simulated.
-        tops1              : dataframe of file 1 times for each agent, filled by run_mmk.
-        tops2              : dataframe of file 2 times for each agent, filled by run_mm1.
-        tops               : dataframe of both files times for each agent, filled by run.
+        p (float) : probability of backing up a result.
     """
 
 
-    def __init__(self, lamda, mu1, K, mu2, ks, kf, p, gen, test_z=100) :
+    def __init__(self, lamda, mu1, K, mu2, ks, kf, p, gen, test_z=100, service_law1=None, service_law2=None) :
         """
         Initializes a new instance of the class waterfall_simulation_3.
 
         Args :
-            lamda  : parameter of exponential law corresponding to interarrival times.
-            mu1    : parameter of exponential law corresponding to service times of file 1.
-            K      : number of servers of file 1.
-            mu2    : parameter of exponential law corresponding to service times of file 2.
-            ks     : capacity of file 1, servers excluded.
-            kf     : capacity of file 2, server excluded.
-            p      : probability of backing up a result.
-            gen    : a random generator
-            test_z : test size.
+            lamda, mu1, K, mu2, ks, kf, gen, test_z, service_law1, service_law2 : see waterfall_simulation_2.
+            p : probability of backing up a result, between 0 and 1.
         """
+        if not 0 <= p <= 1:
+            raise ValueError("p is a probability, it must be between 0 and 1")
 
-        self.lamda = lamda
-        self.mu1 = mu1
-        self.K = K
-        self.mu2 = mu2
-        self.ks = ks
-        self.kf = kf
+        super().__init__(lamda, mu1, K, mu2, ks, kf, gen, test_z, service_law1, service_law2)
         self.p = p
-        self.gen = gen
-        self.t_size = test_z
-
-        self.tops1 = None
-        self.tops2 = None
-        self.tops = None
-
-    def run_mmk(self):
-        """
-        Simulates file 1 alone, an M/M/K/(K+ks) queue fed by a Poisson process of intensity lamda.
-
-        Fills the attribute tops1.
-        """
-        self.tops = None
-        t_arrivals = Utils.poisson_arrivals(self.gen, self.lamda, self.t_size)
-        self.tops1 = Utils.simulate_queue(self.gen, t_arrivals, self.mu1, self.K, self.ks)
 
     def run_mm1(self, t_arrivals=None):
         """
-        Simulates file 2 alone with its back-up.
+        Simulates file 2 alone with its back-up. Replaces the method of waterfall_simulation_2, which run()
+        calls.
 
         Fills the attribute tops2.
 
@@ -84,70 +53,59 @@ class waterfall_simulation_3():
             t_arrivals = Utils.poisson_arrivals(self.gen, self.lamda, self.t_size)
 
         self.tops = None
-        self.tops2 = Utils.simulate_queue(self.gen, t_arrivals, self.mu2, 1, self.kf, self.p)
-
-    def run(self):
-        """
-        Simulates the whole system : the departures of file 1 are the arrivals of file 2.
-
-        Fills tops1, tops2 and tops. The dataframe tops has one row per push and contains the columns
-        of both files, suffixed by 1 or 2, and the total durations t_sojourn, t_waiting and t_service.
-        """
-        self.run_mmk()
-        self.run_mm1(self.tops1['t_depart_sys'])
-        self.tops = Utils.join_files(self.tops1, self.tops2)
-
-    def counts(self, t_intervals, file=None):
-        """
-        Computes number of agents in system at all given times, refused agents excluded.
-
-        Args :
-            t_intervals : size of time laps between two successive tops.
-            file        : 1 or 2 for a single file, None for the whole system (both queues, both services).
-
-        Returns :
-            A dataframe indexed by time laps of size t_intervals all along total queue simulation time,
-            its three columns contain number of agents in system (ag_in_sys), in arrival queue (ag_in_queue) and
-            in service (ag_in_service).
-        """
-        return Utils.counts(self.tops1, self.tops2, self.tops, t_intervals, file)
-
-    def backup_counts(self, t_intervals):
-        """
-        Computes number of agents in back-up at all given times.
-
-        Args :
-            t_intervals : size of time laps between two successive tops.
-
-        Returns :
-            A series indexed by time laps of size t_intervals : what exceeds the kf places of file 2.
-        """
-        return (self.counts(t_intervals, file=2)['ag_in_queue'] - self.kf).clip(lower=0)
+        self.tops2 = Utils.simulate_queue(self.gen, t_arrivals, self.mu2, 1, self.kf - 1,
+                                          p_backup=self.p, service_law=self.service_law2)
+        if self.p == 0:  # Utils only adds the columns when there is a back-up
+            self.tops2['backed_up'] = False
+            self.tops2['rescued'] = False
 
     def stats(self, file=None):
         """
-        Computes statistics of a current simulation of queue, over the agents that were served.
-
-        Args :
-            file : 1 or 2 for a single file, None for the whole system.
-
-        Returns:
-            A dataframe indexed by standard statistics of interest mean sojourn time (mean_sojourn_time),
-            mean waiting time (mean_waiting_time), mean service time (mean_service_time) and empirical
-            variance of sojourn time (var_sojourn_time).
+        Same as waterfall_simulation_2.stats, with the empirical variance of sojourn time (var_sojourn_time).
         """
         return Utils.stats(self.tops1, self.tops2, self.tops, file, variance=True)
 
-    def refusal_rate(self, file=None):
+    def rescued_rate(self):
         """
-        Computes the proportion of agents refused.
-
-        Args :
-            file : 1 for the pushes refused by file 1, 2 for the results refused by file 2 (blank pages,
-                   among the results that left file 1), None for the pushes that never get a result,
-                   whichever file refused them.
+        Computes the proportion of results kept by the back-up, among the results that left file 1 : without
+        the back-up, these results would have been blank pages.
 
         Returns :
-            The proportion of refused agents, as a float.
+            The proportion of rescued results, as a float.
         """
-        return Utils.refusal_rate(self.tops1, self.tops2, self.tops, file)
+        if self.tops2 is None:
+            raise RuntimeError("call run() first")
+        return self.tops2['rescued'].mean()
+
+    def backup_counts(self, t_intervals):
+        """
+        Computes number of results in back-up at all given times.
+
+        Args :
+            t_intervals : size of time laps between two successive tops.
+
+        Returns :
+            A series indexed by time laps of size t_intervals : the results waiting beyond the kf - 1 waiting
+            places of file 2.
+        """
+        return (self.counts(t_intervals, file=2)['ag_in_queue'] - (self.kf - 1)).clip(lower=0)
+
+    def sojourn_by_group(self):
+        """
+        Computes mean and empirical variance of sojourn time, separately for the results rescued by the back-up
+        and for the other delivered results.
+
+        Returns :
+            A dataframe indexed by group (rescued, others), with columns count, mean_sojourn_time and
+            var_sojourn_time.
+        """
+        if self.tops is None:
+            raise RuntimeError("call run() first")
+        delivered = self.tops.dropna(subset=['t_depart_sys2'])
+        groups = {'rescued': delivered[delivered['rescued'].astype(bool)],
+                  'others': delivered[~delivered['rescued'].astype(bool)]}
+        return pd.DataFrame({
+            'count': {g: len(d) for g, d in groups.items()},
+            'mean_sojourn_time': {g: d['t_sojourn'].mean() for g, d in groups.items()},
+            'var_sojourn_time': {g: d['t_sojourn'].var() for g, d in groups.items()},
+        })
