@@ -22,36 +22,43 @@ class Utils():
         return pd.Series(np.cumsum(gen.exponential(1.0 / lamda, t_size)))
 
     @staticmethod
-    def simulate_queue(gen, t_arrivals, mu, n_servers, capacity=np.inf, p_backup=0.0):
+    def simulate_queue(gen, t_arrivals, mu, n_servers, capacity=np.inf, p_backup=0.0, service_law=None):
         """
-        Simulates a FIFO queue with n_servers identical exponential servers.
+        Simulates a FIFO queue with n_servers identical servers, exponential by default.
 
         Args :
-            gen        : a random generator
-            t_arrivals : series of queue arrival times, indexed by agent. NaN (agents refused upstream) are ignored.
-            mu         : parameter of exponential law corresponding to service times.
-            n_servers  : number of servers.
-            capacity   : number of places in queue, servers excluded.
-            p_backup   : probability that an agent is backed up, in which case it is never refused and waits
-                         for a place when the queue is full.
+            gen         : a random generator
+            t_arrivals  : series of queue arrival times, indexed by agent. NaN (agents refused upstream) are ignored.
+            mu          : service rate, the mean service time is 1/mu.
+            n_servers   : number of servers.
+            capacity    : number of places in queue, servers excluded.
+            p_backup    : probability that an agent is backed up, in which case it is never refused and waits
+                          in an infinite back-up for a place when the queue is full.
+            service_law : function (gen, mean, size) -> array of service times. If None, exponential law.
 
         Returns :
             A dataframe indexed by agent, sorted by queue arrival time, containing queue arrival times
             (t_arval_queue), service arrival times (t_arval_srv), departure times (t_depart_sys),
             sojourn (t_sojourn), waiting (t_waiting) and service (t_service) times. Refused agents have
-            NaN everywhere but in t_arval_queue.
+            NaN everywhere but in t_arval_queue. If p_backup > 0, two boolean columns are added : backed_up
+            (the agent was backed up) and rescued (the agent found the queue full and was kept by the back-up,
+            it would have been refused without it).
         """
         t_arrivals = t_arrivals.dropna().sort_values()
         t_arval_queue = t_arrivals.to_numpy()
         n = len(t_arval_queue)
-        services = gen.exponential(1.0 / mu, n)
+        if service_law is None:
+            services = gen.exponential(1.0 / mu, n)
+        else:
+            services = service_law(gen, 1.0 / mu, n)
         backed_up = gen.random(n) < p_backup if p_backup > 0 else np.zeros(n, dtype=bool)
 
         t_arval_srv = np.full(n, np.nan)
         t_depart_sys = np.full(n, np.nan)
+        rescued = np.zeros(n, dtype=bool)
 
         free_at = [0.0] * n_servers
-        waiting = deque() # service start times of the agents still waiting, in increasing order
+        waiting = deque()
 
         for i, t in enumerate(t_arval_queue):
             while waiting and waiting[0] <= t:
@@ -59,8 +66,10 @@ class Utils():
 
             start = max(t, free_at[0])
             if start > t:
-                if len(waiting) >= capacity and not backed_up[i]:
-                    continue
+                if len(waiting) >= capacity:
+                    if not backed_up[i]:
+                        continue
+                    rescued[i] = True
                 waiting.append(start)
 
             t_arval_srv[i] = start
@@ -77,6 +86,9 @@ class Utils():
         tops['t_sojourn'] = tops['t_depart_sys'] - tops['t_arval_queue']
         tops['t_waiting'] = tops['t_arval_srv'] - tops['t_arval_queue']
         tops['t_service'] = tops['t_depart_sys'] - tops['t_arval_srv']
+        if p_backup > 0:
+            tops['backed_up'] = backed_up
+            tops['rescued'] = rescued
         return tops
 
     @staticmethod
@@ -193,3 +205,65 @@ class Utils():
         if file is None:
             return tops['t_depart_sys2'].isna().mean()
         return {1: tops1, 2: tops2}[file]['t_depart_sys'].isna().mean()
+
+    @staticmethod
+    def mmkn_blocking(lamda, mu, n_servers, capacity):
+        """
+        Computes the exact blocking probability of an M/M/K/N queue, that is the stationary probability that the
+        system is full (an arriving agent sees it full, by PASTA). With n_servers = 1 it is an M/M/1/N queue.
+
+        Args :
+            lamda     : arrival rate.
+            mu        : service rate of each server.
+            n_servers : number of servers K.
+            capacity  : total capacity N of the system, servers included (N >= K).
+
+        Returns :
+            The blocking probability, as a float.
+        """
+        weights = np.ones(capacity + 1)
+        for n in range(1, capacity + 1):
+            weights[n] = weights[n - 1] * lamda / (min(n, n_servers) * mu)
+        return weights[-1] / weights.sum()
+
+    @staticmethod
+    def tandem_blocking_exact(lamda, mu1, n_servers, ks, mu2, kf):
+        """
+        Computes the exact refusal proportions of the tandem M/M/K/ks -> M/M/1/kf, from the stationary distribution
+        of the Markov chain on (n1, n2), n1 being the number of pushes in file 1 and n2 the number of results in
+        file 2. No Poisson assumption is made on the departures of file 1.
+
+        Args :
+            lamda, mu1, mu2 : arrival rate, service rate of each server of file 1, service rate of file 2.
+            n_servers       : number K of servers of file 1.
+            ks, kf          : total capacities of file 1 and file 2, servers included.
+
+        Returns :
+            (p1, p2) where p1 is the proportion of pushes refused by file 1 and p2 the proportion of results lost
+            by file 2 among the results leaving file 1.
+        """
+        width = kf + 1
+        size = (ks + 1) * width
+        q = np.zeros((size, size))
+
+        for n1 in range(ks + 1):
+            for n2 in range(kf + 1):
+                i = n1 * width + n2
+                if n1 < ks:
+                    q[i, (n1 + 1) * width + n2] += lamda
+                if n1 > 0:
+                    q[i, (n1 - 1) * width + min(n2 + 1, kf)] += min(n1, n_servers) * mu1
+                if n2 > 0:
+                    q[i, n1 * width + n2 - 1] += mu2
+        q[np.diag_indices(size)] = -q.sum(axis=1)
+
+        a = q.T.copy()
+        a[-1, :] = 1.0
+        b = np.zeros(size)
+        b[-1] = 1.0
+        pi = np.linalg.solve(a, b).reshape(ks + 1, width)
+
+        departures = np.minimum(np.arange(ks + 1), n_servers) * mu1
+        p1 = pi[ks].sum()
+        p2 = (departures * pi[:, kf]).sum() / (departures * pi.sum(axis=1)).sum()
+        return p1, p2
